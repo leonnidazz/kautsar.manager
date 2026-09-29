@@ -1,6 +1,6 @@
 import { Task, Transaction, FileItem, WishlistItem, UserProfile } from '../types';
 const API_BASE_URL =
-  import.meta.env.VITE_API_URL || 'http://localhost:4000';
+  import.meta.env.VITE_API_URL || '${API_BASE_URL}';
 
 const STORAGE_KEYS = {
   PROFILE: 'pms_profile',
@@ -400,7 +400,7 @@ export const StorageService = {
   // =========================
 
   async getTasks(): Promise<Task[]> {
-    const response = await fetch('http://localhost:4000/api/tasks');
+    const response = await fetch('${API_BASE_URL}/api/tasks');
 
     if (!response.ok) {
       throw new Error('Gagal mengambil tasks dari PostgreSQL');
@@ -432,7 +432,7 @@ export const StorageService = {
           : null,
     };
 
-    const response = await fetch('http://localhost:4000/api/tasks', {
+    const response = await fetch('${API_BASE_URL}/api/tasks', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -448,7 +448,7 @@ export const StorageService = {
   },
   async updateTask(task: Task): Promise<Task> {
   const response = await fetch(
-    `http://localhost:4000/api/tasks/${encodeURIComponent(task.id)}`,
+    `${API_BASE_URL}/api/tasks/${encodeURIComponent(task.id)}`,
     {
       method: 'PATCH',
       headers: {
@@ -467,7 +467,7 @@ export const StorageService = {
 
   async deleteTask(id: string): Promise<void> {
     const response = await fetch(
-      `http://localhost:4000/api/tasks/${encodeURIComponent(id)}`,
+      `${API_BASE_URL}/api/tasks/${encodeURIComponent(id)}`,
       {
         method: 'DELETE',
       },
@@ -480,7 +480,7 @@ export const StorageService = {
 
   async toggleTaskStatus(id: string): Promise<Task | null> {
     const response = await fetch(
-      `http://localhost:4000/api/tasks/${encodeURIComponent(id)}/toggle`,
+      `${API_BASE_URL}/api/tasks/${encodeURIComponent(id)}/toggle`,
       {
         method: 'PATCH',
         headers: {
@@ -505,7 +505,7 @@ export const StorageService = {
     subtaskId: string,
   ): Promise<Task | null> {
     const response = await fetch(
-      `http://localhost:4000/api/tasks/${encodeURIComponent(
+      `${API_BASE_URL}/api/tasks/${encodeURIComponent(
         taskId,
       )}/subtasks/${encodeURIComponent(subtaskId)}/toggle`,
       {
@@ -537,7 +537,7 @@ export const StorageService = {
 
   async getTransactions(): Promise<Transaction[]> {
     const response = await fetch(
-      'http://localhost:4000/api/transactions'
+      '${API_BASE_URL}/api/transactions'
     );
 
     if (!response.ok) {
@@ -565,7 +565,7 @@ export const StorageService = {
     };
 
     const response = await fetch(
-      `http://localhost:4000/api/transactions${
+      `${API_BASE_URL}/api/transactions${
         trxData.id
           ? `/${encodeURIComponent(trxData.id)}`
           : ''
@@ -592,7 +592,7 @@ export const StorageService = {
 
   async deleteTransaction(id: string): Promise<void> {
     const response = await fetch(
-      `http://localhost:4000/api/transactions/${encodeURIComponent(id)}`,
+      `${API_BASE_URL}/api/transactions/${encodeURIComponent(id)}`,
       {
         method: 'DELETE',
       },
@@ -611,7 +611,7 @@ export const StorageService = {
 
   async getFiles(): Promise<FileItem[]> {
   const response = await fetch(
-    'http://localhost:4000/api/files'
+    '${API_BASE_URL}/api/files'
   );
 
   if (!response.ok) {
@@ -647,7 +647,7 @@ async saveFile(
   };
 
   const response = await fetch(
-    `http://localhost:4000/api/files${
+    `${API_BASE_URL}/api/files${
       fileData.id
         ? `/${encodeURIComponent(fileData.id)}`
         : ''
@@ -709,7 +709,7 @@ async uploadFile(
   );
 
   const response = await fetch(
-    'http://localhost:4000/api/files/upload',
+    '${API_BASE_URL}/api/files/upload',
     {
       method: 'POST',
       body: formData,
@@ -736,7 +736,7 @@ async uploadFile(
 
 async deleteFile(id: string): Promise<void> {
   const response = await fetch(
-    `http://localhost:4000/api/files/${encodeURIComponent(id)}`,
+    `${API_BASE_URL}/api/files/${encodeURIComponent(id)}`,
     {
       method: 'DELETE',
     },
