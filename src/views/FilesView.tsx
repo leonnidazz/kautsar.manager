@@ -16,6 +16,9 @@ import {
 import { FileItem } from '../types';
 import { formatFileSize, formatDateIndo } from '../utils/formatters';
 
+const API_BASE_URL =
+  (import.meta.env.VITE_API_URL || 'http://localhost:4000').replace(/\/+$/, '');
+
 interface FilesViewProps {
   files: FileItem[];
   openQuickAdd: () => void;
@@ -160,7 +163,7 @@ export const FilesView: React.FC<FilesViewProps> = ({
       }
 
       const url =
-        `http://localhost:4000${file.storage_path}`;
+        `${API_BASE_URL}${file.storage_path}`;
 
       const response = await fetch(url);
 
@@ -508,7 +511,7 @@ export const FilesView: React.FC<FilesViewProps> = ({
                 <div className="h-[65vh] w-full bg-black">
 
                   <iframe
-                    src={`http://localhost:4000${previewFile.storage_path}`}
+                    src={`${API_BASE_URL}${previewFile.storage_path}`}
                     title={previewFile.name}
                     className="w-full h-full border-0"
                   />
@@ -524,7 +527,7 @@ export const FilesView: React.FC<FilesViewProps> = ({
                 <div className="max-h-[65vh] min-h-[300px] flex items-center justify-center overflow-auto bg-black/50 p-4">
 
                   <img
-                    src={`http://localhost:4000${previewFile.storage_path}`}
+                    src={`${API_BASE_URL}${previewFile.storage_path}`}
                     alt={previewFile.name}
                     className="max-h-[60vh] max-w-full object-contain"
                   />

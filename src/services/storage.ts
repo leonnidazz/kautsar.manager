@@ -1,6 +1,6 @@
 import { Task, Transaction, FileItem, WishlistItem, UserProfile } from '../types';
 const API_BASE_URL =
-  import.meta.env.VITE_API_URL || '${API_BASE_URL}';
+  (import.meta.env.VITE_API_URL || 'http://localhost:4000').replace(/\/+$/, '');
 
 const STORAGE_KEYS = {
   PROFILE: 'pms_profile',
@@ -400,7 +400,7 @@ export const StorageService = {
   // =========================
 
   async getTasks(): Promise<Task[]> {
-    const response = await fetch('${API_BASE_URL}/api/tasks');
+    const response = await fetch(`${API_BASE_URL}/api/tasks`);
 
     if (!response.ok) {
       throw new Error('Gagal mengambil tasks dari PostgreSQL');
@@ -432,7 +432,7 @@ export const StorageService = {
           : null,
     };
 
-    const response = await fetch('${API_BASE_URL}/api/tasks', {
+    const response = await fetch(`${API_BASE_URL}/api/tasks`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -537,7 +537,7 @@ export const StorageService = {
 
   async getTransactions(): Promise<Transaction[]> {
     const response = await fetch(
-      '${API_BASE_URL}/api/transactions'
+      `${API_BASE_URL}/api/transactions`
     );
 
     if (!response.ok) {
@@ -611,7 +611,7 @@ export const StorageService = {
 
   async getFiles(): Promise<FileItem[]> {
   const response = await fetch(
-    '${API_BASE_URL}/api/files'
+    `${API_BASE_URL}/api/files`
   );
 
   if (!response.ok) {
@@ -709,7 +709,7 @@ async uploadFile(
   );
 
   const response = await fetch(
-    '${API_BASE_URL}/api/files/upload',
+    `${API_BASE_URL}/api/files/upload`,
     {
       method: 'POST',
       body: formData,
