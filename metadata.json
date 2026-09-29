@@ -1,0 +1,7 @@
+{
+  "name": "Personal Management System",
+  "description": "Cross-platform personal productivity, finance, files, wishlist and planning system with dark grey aesthetic.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+
