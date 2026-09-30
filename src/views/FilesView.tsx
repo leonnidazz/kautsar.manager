@@ -163,7 +163,7 @@ export const FilesView: React.FC<FilesViewProps> = ({
       }
 
       const url =
-        `${API_BASE_URL}${file.storage_path}`;
+        `${API_BASE_URL}/${file.storage_path.replace(/^\/+/, '')}`
 
       const response = await fetch(url);
 
