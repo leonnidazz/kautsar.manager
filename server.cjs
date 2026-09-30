@@ -11,44 +11,72 @@ const PORT = process.env.PORT || 4000;
 app.use(express.json());
 app.use(cors());
 
-const uploadDir = path.join(__dirname, "uploads");
-
-if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir, { recursive: true });
-}
-app.use(
-  "/uploads",
-  express.static(uploadDir)
-);
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, uploadDir);
-  },
-
-  filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname);
-
-    const safeName =
-      path
-        .basename(file.originalname, ext)
-        .replace(/[^a-zA-Z0-9_-]/g, "_");
-
-    const filename =
-      `${Date.now()}_${Math.random()
-        .toString(36)
-        .substring(2, 8)}_${safeName}${ext}`;
-
-    cb(null, filename);
-  },
-});
+const multerStorage = multer.memoryStorage();
 
 const upload = multer({
-  storage,
+  storage: multerStorage,
 
   limits: {
     fileSize: 1024 * 1024 * 500,
   },
 });
+
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_SERVICE_ROLE_KEY =
+  process.env.SUPABASE_SERVICE_ROLE_KEY;
+const SUPABASE_BUCKET =
+  process.env.SUPABASE_BUCKET || "files";
+
+async function uploadToSupabaseStorage(file) {
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+    throw new Error(
+      "SUPABASE_URL atau SUPABASE_SERVICE_ROLE_KEY belum dikonfigurasi."
+    );
+  }
+
+  const ext = path.extname(file.originalname);
+
+  const safeName = path
+    .basename(file.originalname, ext)
+    .replace(/[^a-zA-Z0-9_-]/g, "_");
+
+  const filename =
+    `${Date.now()}_${Math.random()
+      .toString(36)
+      .substring(2, 8)}_${safeName}${ext}`;
+
+  const storagePath = `uploads/${filename}`;
+
+  const encodedPath = storagePath
+    .split("/")
+    .map(encodeURIComponent)
+    .join("/");
+
+  const response = await fetch(
+    `${SUPABASE_URL}/storage/v1/object/${SUPABASE_BUCKET}/${encodedPath}`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+        apikey: SUPABASE_SERVICE_ROLE_KEY,
+        "Content-Type":
+          file.mimetype || "application/octet-stream",
+        "x-upsert": "true",
+      },
+      body: file.buffer,
+    }
+  );
+
+  if (!response.ok) {
+    const errorText = await response.text();
+
+    throw new Error(
+      `Supabase Storage upload gagal: ${errorText}`
+    );
+  }
+
+  return storagePath;
+}
 
 /* =========================================================
    GET ALL TASKS
@@ -531,6 +559,9 @@ app.post("/api/files/upload", upload.single("file"), async (req, res) => {
       description,
     } = req.body;
 
+    // Upload binary file ke Supabase Storage
+    const storagePath = await uploadToSupabaseStorage(req.file);
+
     const result = await db.query(
       `INSERT INTO files
        (
@@ -552,7 +583,7 @@ app.post("/api/files/upload", upload.single("file"), async (req, res) => {
         id,
         user_id,
         req.file.originalname,
-        `/uploads/${req.file.filename}`,
+        storagePath,
         req.file.mimetype || "application/octet-stream",
         req.file.size,
         folder || "Umum",
@@ -570,19 +601,8 @@ app.post("/api/files/upload", upload.single("file"), async (req, res) => {
   } catch (error) {
     console.error("UPLOAD FILE ERROR:", error);
 
-    if (req.file) {
-      const uploadedPath = path.join(
-        uploadDir,
-        req.file.filename
-      );
-
-      if (fs.existsSync(uploadedPath)) {
-        fs.unlinkSync(uploadedPath);
-      }
-    }
-
     res.status(500).json({
-      error: "Gagal mengupload file",
+      error: error.message || "Gagal mengupload file",
     });
   }
 });
