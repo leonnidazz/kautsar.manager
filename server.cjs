@@ -754,7 +754,97 @@ app.delete("/api/files/:id", async (req, res) => {
 /* =========================================================
    START SERVER
 ========================================================= */
+// DOWNLOAD FILE DARI SUPABASE STORAGE
+app.get("/api/files/download/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
 
+    const result = await db.query(
+      `SELECT *
+       FROM files
+       WHERE id = $1
+       LIMIT 1`,
+      [id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        error: "File tidak ditemukan di database",
+      });
+    }
+
+    const file = result.rows[0];
+
+    if (!file.storage_path) {
+      return res.status(404).json({
+        error: "Storage path file tidak ditemukan",
+      });
+    }
+
+    if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+      return res.status(500).json({
+        error: "Konfigurasi Supabase Storage belum tersedia",
+      });
+    }
+
+    const encodedPath = file.storage_path
+      .split("/")
+      .map(encodeURIComponent)
+      .join("/");
+
+    const storageUrl =
+      `${SUPABASE_URL}/storage/v1/object/` +
+      `${SUPABASE_BUCKET}/${encodedPath}`;
+
+    const response = await fetch(storageUrl, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+        apikey: SUPABASE_SERVICE_ROLE_KEY,
+      },
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+
+      console.error(
+        "SUPABASE DOWNLOAD ERROR:",
+        response.status,
+        errorText
+      );
+
+      return res.status(response.status).json({
+        error: "Gagal mengambil file dari Supabase Storage",
+      });
+    }
+
+    const arrayBuffer = await response.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+
+    res.setHeader(
+      "Content-Type",
+      file.mime_type || "application/octet-stream"
+    );
+
+    res.setHeader(
+      "Content-Length",
+      buffer.length
+    );
+
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${encodeURIComponent(file.name)}"`
+    );
+
+    res.send(buffer);
+  } catch (error) {
+    console.error("DOWNLOAD FILE ERROR:", error);
+
+    res.status(500).json({
+      error: error.message || "Gagal mendownload file",
+    });
+  }
+});
 
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`API berjalan di port ${PORT}`);
