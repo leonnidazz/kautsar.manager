@@ -4,10 +4,23 @@ const multer = require("multer");
 const path = require("path");
 const fs = require("fs");
 const cors = require("cors");
+
+
 const db = require("./db.cjs");
 
 const app = express();
 const PORT = process.env.PORT || 4000;
+
+app.use(
+  cors({
+    origin: [
+      "http://localhost:3000",
+      "https://kautsar-manager-1.onrender.com",
+    ],
+  })
+);
+
+app.use(express.json());
 
 app.use(express.json());
 // =========================
@@ -291,7 +304,6 @@ app.patch(
     }
   }
 );
-app.use(cors());
 
 const multerStorage = multer.memoryStorage();
 
