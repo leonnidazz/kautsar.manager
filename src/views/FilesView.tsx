@@ -154,50 +154,60 @@ export const FilesView: React.FC<FilesViewProps> = ({
   };
 
   // Real download handler
+  
   const handleDownload = async (file: FileItem) => {
-    try {
-      if (!file.storage_path) {
-        throw new Error(
-          'File tidak memiliki storage path'
-        );
-      }
-
-      const url =
-        `${API_BASE_URL}/${file.storage_path.replace(/^\/+/, '')}`
-
-      const response = await fetch(url);
-
-      if (!response.ok) {
-        throw new Error(
-          `Gagal mengambil file (${response.status})`
-        );
-      }
-
-      const blob = await response.blob();
-
-      const blobUrl = URL.createObjectURL(blob);
-
-      const a = document.createElement('a');
-
-      a.href = blobUrl;
-      a.download = file.name;
-
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-
-      URL.revokeObjectURL(blobUrl);
-    } catch (error) {
-      console.error(
-        'DOWNLOAD FILE ERROR:',
-        error
-      );
-
-      alert(
-        'File tidak dapat didownload.'
-      );
+  try {
+    if (!file.id) {
+      throw new Error("File tidak memiliki ID");
     }
-  };
+
+    const url =
+      `${API_BASE_URL}/api/files/download/${encodeURIComponent(file.id)}`;
+
+    const response = await fetch(url);
+
+    if (!response.ok) {
+      let message = `Gagal mengambil file (${response.status})`;
+
+      try {
+        const data = await response.json();
+
+        if (data?.error) {
+          message = data.error;
+        }
+      } catch {
+        // Abaikan jika response bukan JSON
+      }
+
+      throw new Error(message);
+    }
+
+    const blob = await response.blob();
+
+    const blobUrl = URL.createObjectURL(blob);
+
+    const a = document.createElement("a");
+
+    a.href = blobUrl;
+    a.download = file.name;
+
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+
+    setTimeout(() => {
+      URL.revokeObjectURL(blobUrl);
+    }, 1000);
+  } catch (error) {
+    console.error("DOWNLOAD FILE ERROR:", error);
+
+    alert(
+      error instanceof Error
+        ? error.message
+        : "File tidak dapat didownload."
+    );
+  }
+};
 
   return (
     <div className="p-4 sm:p-6 md:p-8 space-y-6 max-w-7xl mx-auto">
