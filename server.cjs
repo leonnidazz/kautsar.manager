@@ -10,6 +10,287 @@ const app = express();
 const PORT = process.env.PORT || 4000;
 
 app.use(express.json());
+// =========================
+// TASKS - POSTGRESQL
+// =========================
+
+app.get("/api/tasks", async (req, res) => {
+  try {
+    const result = await db.query(`
+      SELECT *
+      FROM tasks
+      ORDER BY created_at DESC
+    `);
+
+    res.json(result.rows);
+  } catch (error) {
+    console.error("GET TASKS ERROR:", error);
+
+    res.status(500).json({
+      error: "Gagal mengambil tasks",
+    });
+  }
+});
+
+app.post("/api/tasks", async (req, res) => {
+  try {
+    const {
+      id,
+      user_id,
+      title,
+      description,
+      category,
+      priority,
+      status,
+      due_at,
+      created_at,
+      completed_at,
+      subtasks,
+    } = req.body;
+
+    const normalizedSubtasks =
+      typeof subtasks === "string"
+        ? JSON.parse(subtasks)
+        : subtasks || [];
+
+    const result = await db.query(
+      `
+      INSERT INTO tasks (
+        id,
+        user_id,
+        title,
+        description,
+        category,
+        priority,
+        status,
+        due_at,
+        created_at,
+        completed_at,
+        subtasks
+      )
+      VALUES (
+        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11
+      )
+      RETURNING *
+      `,
+      [
+        id,
+        user_id,
+        title,
+        description || "",
+        category,
+        priority,
+        status,
+        due_at || null,
+        created_at || new Date(),
+        completed_at || null,
+        JSON.stringify(normalizedSubtasks),
+      ]
+    );
+
+    res.status(201).json(result.rows[0]);
+  } catch (error) {
+    console.error("POST TASK ERROR:", error);
+
+    res.status(500).json({
+      error: "Gagal menyimpan task",
+    });
+  }
+});
+
+app.patch("/api/tasks/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const {
+      title,
+      description,
+      category,
+      priority,
+      status,
+      due_at,
+      completed_at,
+      subtasks,
+    } = req.body;
+
+    const result = await db.query(
+      `
+      UPDATE tasks
+      SET
+        title = $1,
+        description = $2,
+        category = $3,
+        priority = $4,
+        status = $5,
+        due_at = $6,
+        completed_at = $7,
+        subtasks = $8
+      WHERE id = $9
+      RETURNING *
+      `,
+      [
+        title,
+        description || "",
+        category,
+        priority,
+        status,
+        due_at || null,
+        completed_at || null,
+        JSON.stringify(
+          typeof subtasks === "string"
+            ? JSON.parse(subtasks)
+            : subtasks || []
+        ),
+        id,
+      ]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        error: "Task tidak ditemukan",
+      });
+    }
+
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error("PATCH TASK ERROR:", error);
+
+    res.status(500).json({
+      error: "Gagal mengubah task",
+    });
+  }
+});
+
+app.delete("/api/tasks/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const result = await db.query(
+      `
+      DELETE FROM tasks
+      WHERE id = $1
+      RETURNING id
+      `,
+      [id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        error: "Task tidak ditemukan",
+      });
+    }
+
+    res.status(204).send();
+  } catch (error) {
+    console.error("DELETE TASK ERROR:", error);
+
+    res.status(500).json({
+      error: "Gagal menghapus task",
+    });
+  }
+});
+
+app.patch("/api/tasks/:id/toggle", async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const result = await db.query(
+      `
+      UPDATE tasks
+      SET
+        status = CASE
+          WHEN status = 'completed'
+            THEN 'pending'
+          ELSE 'completed'
+        END,
+        completed_at = CASE
+          WHEN status = 'completed'
+            THEN NULL
+          ELSE NOW()
+        END
+      WHERE id = $1
+      RETURNING *
+      `,
+      [id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        error: "Task tidak ditemukan",
+      });
+    }
+
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error("TOGGLE TASK ERROR:", error);
+
+    res.status(500).json({
+      error: "Gagal mengubah status task",
+    });
+  }
+});
+
+app.patch(
+  "/api/tasks/:taskId/subtasks/:subtaskId/toggle",
+  async (req, res) => {
+    try {
+      const { taskId, subtaskId } = req.params;
+
+      const result = await db.query(
+        `
+        SELECT subtasks
+        FROM tasks
+        WHERE id = $1
+        LIMIT 1
+        `,
+        [taskId]
+      );
+
+      if (result.rows.length === 0) {
+        return res.status(404).json({
+          error: "Task tidak ditemukan",
+        });
+      }
+
+      const subtasks = Array.isArray(result.rows[0].subtasks)
+        ? result.rows[0].subtasks
+        : [];
+
+      const index = subtasks.findIndex(
+        (subtask) => String(subtask.id) === String(subtaskId)
+      );
+
+      if (index === -1) {
+        return res.status(404).json({
+          error: "Subtask tidak ditemukan",
+        });
+      }
+
+      subtasks[index] = {
+        ...subtasks[index],
+        completed: !Boolean(subtasks[index].completed),
+      };
+
+      const updated = await db.query(
+        `
+        UPDATE tasks
+        SET subtasks = $1
+        WHERE id = $2
+        RETURNING *
+        `,
+        [JSON.stringify(subtasks), taskId]
+      );
+
+      res.json(updated.rows[0]);
+    } catch (error) {
+      console.error("TOGGLE SUBTASK ERROR:", error);
+
+      res.status(500).json({
+        error: "Gagal mengubah subtask",
+      });
+    }
+  }
+);
 app.use(cors());
 
 const multerStorage = multer.memoryStorage();
