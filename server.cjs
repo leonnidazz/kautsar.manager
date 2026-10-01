@@ -46,6 +46,12 @@ async function uploadToSupabaseStorage(file) {
     );
   }
 
+  if (!SUPABASE_BUCKET) {
+    throw new Error(
+      "SUPABASE_BUCKET belum dikonfigurasi."
+    );
+  }
+
   const ext = path.extname(file.originalname);
 
   const safeName = path
@@ -59,497 +65,57 @@ async function uploadToSupabaseStorage(file) {
 
   const storagePath = `uploads/${filename}`;
 
-  const { data, error } = await supabase.storage
-    .from(SUPABASE_BUCKET)
-    .upload(storagePath, file.buffer, {
-      contentType:
+  const encodedPath = storagePath
+    .split("/")
+    .map(encodeURIComponent)
+    .join("/");
+
+  const storageUrl =
+    `${SUPABASE_URL}/storage/v1/object/` +
+    `${encodeURIComponent(SUPABASE_BUCKET)}/${encodedPath}`;
+
+  console.log("SUPABASE STORAGE UPLOAD START:", {
+    bucket: SUPABASE_BUCKET,
+    path: storagePath,
+    size: file.size,
+    mimeType: file.mimetype,
+  });
+
+  const response = await fetch(storageUrl, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+      apikey: SUPABASE_SERVICE_ROLE_KEY,
+      "Content-Type":
         file.mimetype || "application/octet-stream",
-      upsert: true,
-    });
+      "x-upsert": "true",
+    },
+    body: file.buffer,
+  });
 
-  if (error) {
-    console.error(
-      "SUPABASE STORAGE UPLOAD ERROR:",
-      error
-    );
+  const responseText = await response.text();
 
+  console.log(
+    "SUPABASE STORAGE RESPONSE:",
+    response.status,
+    responseText || "(empty response)"
+  );
+
+  if (!response.ok) {
     throw new Error(
-      `Supabase Storage upload gagal: ${error.message}`
+      `Supabase Storage upload gagal (${response.status}): ${
+        responseText || "response kosong"
+      }`
     );
   }
 
   console.log(
     "SUPABASE STORAGE UPLOAD SUCCESS:",
-    data?.path || storagePath
+    storagePath
   );
 
-  return data?.path || storagePath;
+  return storagePath;
 }
-
-/* =========================================================
-   GET ALL TASKS
-========================================================= */
-
-app.get("/api/tasks", async (req, res) => {
-  try {
-    const result = await db.query(
-      "SELECT * FROM tasks ORDER BY created_at DESC"
-    );
-
-    const tasks = result.rows.map((task) => ({
-      ...task,
-      subtasks: Array.isArray(task.subtasks)
-        ? task.subtasks
-        : [],
-    }));
-
-    res.json(tasks);
-  } catch (error) {
-    console.error("GET TASKS ERROR:", error);
-    res.status(500).json({ error: "Gagal mengambil tasks" });
-  }
-});
-
-app.get("/api/transactions", async (req, res) => {
-  try {
-    const result = await db.query(
-      `SELECT *
-       FROM transactions
-       ORDER BY transaction_at DESC, created_at DESC`
-    );
-
-    res.json(result.rows);
-  } catch (error) {
-    console.error("GET TRANSACTIONS ERROR:", error);
-    res.status(500).json({
-      error: "Gagal mengambil transactions",
-    });
-  }
-});
-
-app.post("/api/transactions", async (req, res) => {
-  try {
-    const {
-      id,
-      user_id,
-      type,
-      amount,
-      category,
-      source_or_note,
-      transaction_at,
-      created_at,
-    } = req.body;
-
-    const result = await db.query(
-      `INSERT INTO transactions
-       (
-         id,
-         user_id,
-         type,
-         amount,
-         category,
-         source_or_note,
-         transaction_at,
-         created_at
-       )
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-       RETURNING *`,
-      [
-        id,
-        user_id,
-        type,
-        amount,
-        category || "Umum",
-        source_or_note || "",
-        transaction_at,
-        created_at || new Date(),
-      ]
-    );
-
-    res.status(201).json(result.rows[0]);
-  } catch (error) {
-    console.error("POST TRANSACTION ERROR:", error);
-    res.status(500).json({
-      error: "Gagal menyimpan transaction",
-    });
-  }
-});
-
-app.patch("/api/transactions/:id", async (req, res) => {
-  try {
-    const { id } = req.params;
-
-    const {
-      type,
-      amount,
-      category,
-      source_or_note,
-      transaction_at,
-    } = req.body;
-
-    const result = await db.query(
-      `UPDATE transactions
-       SET
-         type = $1,
-         amount = $2,
-         category = $3,
-         source_or_note = $4,
-         transaction_at = $5
-       WHERE id = $6
-       RETURNING *`,
-      [
-        type,
-        amount,
-        category || "Umum",
-        source_or_note || "",
-        transaction_at,
-        id,
-      ]
-    );
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({
-        error: "Transaction tidak ditemukan",
-      });
-    }
-
-    res.json(result.rows[0]);
-  } catch (error) {
-    console.error("UPDATE TRANSACTION ERROR:", error);
-    res.status(500).json({
-      error: "Gagal mengupdate transaction",
-    });
-  }
-});
-
-app.delete("/api/transactions/:id", async (req, res) => {
-  try {
-    const { id } = req.params;
-
-    const result = await db.query(
-      `DELETE FROM transactions
-       WHERE id = $1
-       RETURNING *`,
-      [id]
-    );
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({
-        error: "Transaction tidak ditemukan",
-      });
-    }
-
-    res.json({
-      success: true,
-      transaction: result.rows[0],
-    });
-  } catch (error) {
-    console.error("DELETE TRANSACTION ERROR:", error);
-    res.status(500).json({
-      error: "Gagal menghapus transaction",
-    });
-  }
-});
-
-/* =========================================================
-   CREATE TASK
-========================================================= */
-
-app.post("/api/tasks", async (req, res) => {
-  try {
-    const {
-      id,
-      user_id,
-      title,
-      description,
-      category,
-      priority,
-      status,
-      due_at,
-      completed_at,
-      subtasks,
-    } = req.body;
-    
-    
-
-    const result = await db.query(
-      `INSERT INTO tasks
-      (
-        id,
-        user_id,
-        title,
-        description,
-        category,
-        priority,
-        status,
-        due_at,
-        completed_at,
-        subtasks
-      )
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-      RETURNING *`,
-      [
-        id,
-        user_id,
-        title,
-        description || "",
-        category || "Umum",
-        priority || "medium",
-        status || "todo",
-        due_at || null,
-        completed_at || null,
-        JSON.stringify(Array.isArray(subtasks) ? subtasks : []),
-      ]
-    );
-
-    res.status(201).json(result.rows[0]);
-  } catch (error) {
-    console.error("POST TASK ERROR:", error);
-
-    res.status(500).json({
-      error: "Gagal menyimpan task",
-    });
-  }
-});
-app.patch("/api/tasks/:id", async (req, res) => {
-  try {
-    const { id } = req.params;
-
-    const {
-      title,
-      description,
-      category,
-      priority,
-      status,
-      due_at,
-      completed_at,
-      subtasks,
-    } = req.body;
-
-    const result = await db.query(
-      `UPDATE tasks
-       SET
-         title = $1,
-         description = $2,
-         category = $3,
-         priority = $4,
-         status = $5,
-         due_at = $6,
-         completed_at = $7,
-         subtasks = $8
-       WHERE id = $9
-       RETURNING *`,
-      [
-        title,
-        description || "",
-        category || "Umum",
-        priority || "medium",
-        status || "todo",
-        due_at || null,
-        completed_at || null,
-        JSON.stringify(Array.isArray(subtasks) ? subtasks : []),
-        id,
-      ]
-    );
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({
-        error: "Task tidak ditemukan",
-      });
-    }
-
-    res.json(result.rows[0]);
-  } catch (error) {
-    console.error("UPDATE TASK ERROR:", error);
-    res.status(500).json({
-      error: "Gagal mengupdate task",
-    });
-  }
-});
-/* =========================================================
-   DELETE TASK
-========================================================= */
-
-app.delete("/api/tasks/:id", async (req, res) => {
-  try {
-    const { id } = req.params;
-
-    const result = await db.query(
-      "DELETE FROM tasks WHERE id = $1 RETURNING *",
-      [id]
-    );
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({
-        error: "Task tidak ditemukan",
-      });
-    }
-
-    res.json({
-      success: true,
-      task: result.rows[0],
-    });
-  } catch (error) {
-    console.error("DELETE TASK ERROR:", error);
-
-    res.status(500).json({
-      error: "Gagal menghapus task",
-    });
-  }
-});
-
-/* =========================================================
-   TOGGLE TASK STATUS
-========================================================= */
-
-app.patch("/api/tasks/:id/toggle", async (req, res) => {
-  try {
-    const { id } = req.params;
-
-    const current = await db.query(
-      "SELECT * FROM tasks WHERE id = $1",
-      [id]
-    );
-
-    if (current.rows.length === 0) {
-      return res.status(404).json({
-        error: "Task tidak ditemukan",
-      });
-    }
-
-    const task = current.rows[0];
-
-    let newStatus;
-    let completedAt;
-
-    if (task.status === "completed") {
-      newStatus = "in_progress";
-      completedAt = null;
-    } else {
-      newStatus = "completed";
-      completedAt = new Date();
-    }
-
-    const newSubtasks =
-      newStatus === "completed"
-        ? (Array.isArray(task.subtasks)
-            ? task.subtasks
-            : []
-          ).map((subtask) => ({
-            ...subtask,
-            completed: true,
-          }))
-        : task.subtasks;
-
-    const result = await db.query(
-      `UPDATE tasks
-       SET
-         status = $1,
-         completed_at = $2,
-         subtasks = $3
-       WHERE id = $4
-       RETURNING *`,
-      [
-        newStatus,
-        completedAt,
-        JSON.stringify(newSubtasks || []),
-        id,
-      ]
-    );
-
-    res.json(result.rows[0]);
-  } catch (error) {
-    console.error("TOGGLE TASK ERROR:", error);
-
-    res.status(500).json({
-      error: "Gagal mengubah status task",
-    });
-  }
-});
-
-/* =========================================================
-   TOGGLE SUBTASK
-========================================================= */
-
-app.patch(
-  "/api/tasks/:taskId/subtasks/:subtaskId/toggle",
-  async (req, res) => {
-    try {
-      const { taskId, subtaskId } = req.params;
-
-      const result = await db.query(
-        "SELECT * FROM tasks WHERE id = $1",
-        [taskId]
-      );
-
-      if (result.rows.length === 0) {
-        return res.status(404).json({
-          error: "Task tidak ditemukan",
-        });
-      }
-
-      const task = result.rows[0];
-
-      const subtasks = Array.isArray(task.subtasks)
-        ? task.subtasks
-        : [];
-
-      const index = subtasks.findIndex(
-        (subtask) => subtask.id === subtaskId
-      );
-
-      if (index === -1) {
-        return res.status(404).json({
-          error: "Subtask tidak ditemukan",
-        });
-      }
-
-      subtasks[index].completed =
-        !subtasks[index].completed;
-
-      const updated = await db.query(
-        `UPDATE tasks
-         SET subtasks = $1
-         WHERE id = $2
-         RETURNING *`,
-        [
-          JSON.stringify(subtasks),
-          taskId,
-        ]
-      );
-
-      res.json(updated.rows[0]);
-    } catch (error) {
-      console.error("TOGGLE SUBTASK ERROR:", error);
-
-      res.status(500).json({
-        error: "Gagal mengubah subtask",
-      });
-    }
-  }
-);
-
-/* =========================================================
-   FILES
-========================================================= */
-
-app.get("/api/files", async (req, res) => {
-  try {
-    const result = await db.query(
-      `SELECT *
-       FROM files
-       ORDER BY created_at DESC`
-    );
-
-    res.json(result.rows);
-  } catch (error) {
-    console.error("GET FILES ERROR:", error);
-
-    res.status(500).json({
-      error: "Gagal mengambil files",
-    });
-  }
-});
 
 app.post("/api/files/upload", upload.single("file"), async (req, res) => {
   try {
