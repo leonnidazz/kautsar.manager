@@ -511,7 +511,7 @@ export const FilesView: React.FC<FilesViewProps> = ({
                 <div className="h-[65vh] w-full bg-black">
 
                   <iframe
-                    src={`${API_BASE_URL}${previewFile.storage_path}`}
+                    src={`${API_BASE_URL}/${previewFile.storage_path.replace(/^\/+/, '')}`}
                     title={previewFile.name}
                     className="w-full h-full border-0"
                   />
@@ -527,7 +527,7 @@ export const FilesView: React.FC<FilesViewProps> = ({
                 <div className="max-h-[65vh] min-h-[300px] flex items-center justify-center overflow-auto bg-black/50 p-4">
 
                   <img
-                    src={`${API_BASE_URL}${previewFile.storage_path}`}
+                    src={`${API_BASE_URL}/${previewFile.storage_path.replace(/^\/+/, '')}`}
                     alt={previewFile.name}
                     className="max-h-[60vh] max-w-full object-contain"
                   />
