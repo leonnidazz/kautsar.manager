@@ -1,4 +1,5 @@
 const express = require("express");
+const { createClient } = require("@supabase/supabase-js");
 const multer = require("multer");
 const path = require("path");
 const fs = require("fs");
@@ -27,6 +28,17 @@ const SUPABASE_SERVICE_ROLE_KEY =
 const SUPABASE_BUCKET =
   process.env.SUPABASE_BUCKET || "files";
 
+const supabase = createClient(
+  SUPABASE_URL,
+  SUPABASE_SERVICE_ROLE_KEY,
+  {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+    },
+  }
+);
+
 async function uploadToSupabaseStorage(file) {
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
     throw new Error(
@@ -47,35 +59,31 @@ async function uploadToSupabaseStorage(file) {
 
   const storagePath = `uploads/${filename}`;
 
-  const encodedPath = storagePath
-    .split("/")
-    .map(encodeURIComponent)
-    .join("/");
+  const { data, error } = await supabase.storage
+    .from(SUPABASE_BUCKET)
+    .upload(storagePath, file.buffer, {
+      contentType:
+        file.mimetype || "application/octet-stream",
+      upsert: true,
+    });
 
-  const response = await fetch(
-    `${SUPABASE_URL}/storage/v1/object/${SUPABASE_BUCKET}/${encodedPath}`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-        apikey: SUPABASE_SERVICE_ROLE_KEY,
-        "Content-Type":
-          file.mimetype || "application/octet-stream",
-        "x-upsert": "true",
-      },
-      body: file.buffer,
-    }
-  );
-
-  if (!response.ok) {
-    const errorText = await response.text();
+  if (error) {
+    console.error(
+      "SUPABASE STORAGE UPLOAD ERROR:",
+      error
+    );
 
     throw new Error(
-      `Supabase Storage upload gagal: ${errorText}`
+      `Supabase Storage upload gagal: ${error.message}`
     );
   }
 
-  return storagePath;
+  console.log(
+    "SUPABASE STORAGE UPLOAD SUCCESS:",
+    data?.path || storagePath
+  );
+
+  return data?.path || storagePath;
 }
 
 /* =========================================================
