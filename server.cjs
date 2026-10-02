@@ -1,8 +1,7 @@
 const express = require("express");
-const { createClient } = require("@supabase/supabase-js");
 const multer = require("multer");
-const path = require("path");
-const fs = require("fs");
+const path = require("node:path");
+const { randomUUID } = require("node:crypto");
 const cors = require("cors");
 
 
@@ -20,9 +19,17 @@ app.use(
   })
 );
 
-app.use(express.json());
+app.use(express.json({ limit: "2mb" }));
 
-app.use(express.json());
+app.get("/api/health", async (req, res) => {
+  try {
+    await db.query("SELECT 1");
+    res.json({ ok: true, database: "connected" });
+  } catch (error) {
+    console.error("HEALTH CHECK ERROR:", error);
+    res.status(503).json({ ok: false, database: "disconnected" });
+  }
+});
 // =========================
 // TASKS - POSTGRESQL
 // =========================
@@ -213,7 +220,7 @@ app.patch("/api/tasks/:id/toggle", async (req, res) => {
       SET
         status = CASE
           WHEN status = 'completed'
-            THEN 'pending'
+            THEN 'todo'
           ELSE 'completed'
         END,
         completed_at = CASE
@@ -305,6 +312,154 @@ app.patch(
   }
 );
 
+
+// =========================
+// TRANSACTIONS - POSTGRESQL
+// =========================
+
+app.get("/api/transactions", async (req, res) => {
+  try {
+    const result = await db.query(`
+      SELECT *
+      FROM transactions
+      ORDER BY transaction_at DESC, created_at DESC
+    `);
+    res.json(result.rows);
+  } catch (error) {
+    console.error("GET TRANSACTIONS ERROR:", error);
+    res.status(500).json({ error: "Gagal mengambil transactions" });
+  }
+});
+
+app.post("/api/transactions", async (req, res) => {
+  try {
+    const {
+      id,
+      user_id,
+      type,
+      amount,
+      category,
+      source_or_note,
+      transaction_at,
+      created_at,
+    } = req.body;
+
+    if (!id || !user_id || !type || amount === undefined || !category) {
+      return res.status(400).json({ error: "Data transaksi tidak lengkap" });
+    }
+
+    if (!["income", "expense"].includes(type)) {
+      return res.status(400).json({
+        error: "Type transaksi harus income atau expense",
+      });
+    }
+
+    const result = await db.query(
+      `
+      INSERT INTO transactions (
+        id, user_id, type, amount, category,
+        source_or_note, transaction_at, created_at
+      )
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+      RETURNING *
+      `,
+      [
+        id,
+        user_id,
+        type,
+        Number(amount),
+        category,
+        source_or_note || "",
+        transaction_at || new Date().toISOString().split("T")[0],
+        created_at || new Date(),
+      ]
+    );
+
+    res.status(201).json(result.rows[0]);
+  } catch (error) {
+    console.error("POST TRANSACTION ERROR:", error);
+    res.status(500).json({ error: "Gagal menyimpan transaction" });
+  }
+});
+
+app.patch("/api/transactions/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const {
+      type,
+      amount,
+      category,
+      source_or_note,
+      transaction_at,
+    } = req.body;
+
+    if (type && !["income", "expense"].includes(type)) {
+      return res.status(400).json({
+        error: "Type transaksi harus income atau expense",
+      });
+    }
+
+    const result = await db.query(
+      `
+      UPDATE transactions
+      SET
+        type = COALESCE($1, type),
+        amount = COALESCE($2, amount),
+        category = COALESCE($3, category),
+        source_or_note = COALESCE($4, source_or_note),
+        transaction_at = COALESCE($5, transaction_at)
+      WHERE id = $6
+      RETURNING *
+      `,
+      [
+        type || null,
+        amount === undefined ? null : Number(amount),
+        category || null,
+        source_or_note === undefined ? null : source_or_note,
+        transaction_at || null,
+        id,
+      ]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        error: "Transaction tidak ditemukan",
+      });
+    }
+
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error("PATCH TRANSACTION ERROR:", error);
+    res.status(500).json({ error: "Gagal mengubah transaction" });
+  }
+});
+
+app.delete("/api/transactions/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const result = await db.query(
+      `
+      DELETE FROM transactions
+      WHERE id = $1
+      RETURNING id
+      `,
+      [id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        error: "Transaction tidak ditemukan",
+      });
+    }
+
+    res.status(204).send();
+  } catch (error) {
+    console.error("DELETE TRANSACTION ERROR:", error);
+    res.status(500).json({ error: "Gagal menghapus transaction" });
+  }
+});
+
 const multerStorage = multer.memoryStorage();
 
 const upload = multer({
@@ -320,17 +475,6 @@ const SUPABASE_SERVICE_ROLE_KEY =
   process.env.SUPABASE_SERVICE_ROLE_KEY;
 const SUPABASE_BUCKET =
   process.env.SUPABASE_BUCKET || "files";
-
-const supabase = createClient(
-  SUPABASE_URL,
-  SUPABASE_SERVICE_ROLE_KEY,
-  {
-    auth: {
-      persistSession: false,
-      autoRefreshToken: false,
-    },
-  }
-);
 
 async function uploadToSupabaseStorage(file) {
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
@@ -352,9 +496,7 @@ async function uploadToSupabaseStorage(file) {
     .replace(/[^a-zA-Z0-9_-]/g, "_");
 
   const filename =
-    `${Date.now()}_${Math.random()
-      .toString(36)
-      .substring(2, 8)}_${safeName}${ext}`;
+    `${Date.now()}_${randomUUID()}_${safeName}${ext}`;
 
   const storagePath = `uploads/${filename}`;
 
@@ -410,7 +552,26 @@ async function uploadToSupabaseStorage(file) {
   return storagePath;
 }
 
+app.get("/api/files", async (req, res) => {
+  try {
+    const result = await db.query(`
+      SELECT *
+      FROM files
+      ORDER BY created_at DESC
+    `);
+
+    res.json(result.rows);
+  } catch (error) {
+    console.error("GET FILES ERROR:", error);
+    res.status(500).json({
+      error: "Gagal mengambil files",
+    });
+  }
+});
+
 app.post("/api/files/upload", upload.single("file"), async (req, res) => {
+  let uploadedStoragePath = null;
+
   try {
     if (!req.file) {
       return res.status(400).json({
@@ -428,6 +589,7 @@ app.post("/api/files/upload", upload.single("file"), async (req, res) => {
 
     // Upload binary file ke Supabase Storage
     const storagePath = await uploadToSupabaseStorage(req.file);
+    uploadedStoragePath = storagePath;
 
     const result = await db.query(
       `INSERT INTO files
@@ -467,6 +629,14 @@ app.post("/api/files/upload", upload.single("file"), async (req, res) => {
     res.status(201).json(result.rows[0]);
   } catch (error) {
     console.error("UPLOAD FILE ERROR:", error);
+
+    if (uploadedStoragePath) {
+      try {
+        await deleteFromSupabaseStorage(uploadedStoragePath);
+      } catch (cleanupError) {
+        console.error("UPLOAD CLEANUP ERROR:", cleanupError);
+      }
+    }
 
     res.status(500).json({
       error: error.message || "Gagal mengupload file",
@@ -588,26 +758,65 @@ app.patch("/api/files/:id", async (req, res) => {
   }
 });
 
+async function deleteFromSupabaseStorage(storagePath) {
+  if (!storagePath || !SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+    return;
+  }
+
+  const encodedPath = storagePath
+    .split("/")
+    .map(encodeURIComponent)
+    .join("/");
+
+  const storageUrl =
+    `${SUPABASE_URL}/storage/v1/object/` +
+    `${encodeURIComponent(SUPABASE_BUCKET)}/${encodedPath}`;
+
+  const response = await fetch(storageUrl, {
+    method: "DELETE",
+    headers: {
+      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+      apikey: SUPABASE_SERVICE_ROLE_KEY,
+    },
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(
+      `Supabase Storage delete gagal (${response.status}): ${errorText || "response kosong"}`
+    );
+  }
+}
+
 app.delete("/api/files/:id", async (req, res) => {
   try {
     const { id } = req.params;
 
-    const result = await db.query(
-      `DELETE FROM files
-       WHERE id = $1
-       RETURNING *`,
+    const lookup = await db.query(
+      `SELECT * FROM files WHERE id = $1 LIMIT 1`,
       [id]
     );
 
-    if (result.rows.length === 0) {
+    if (lookup.rows.length === 0) {
       return res.status(404).json({
         error: "File tidak ditemukan",
       });
     }
 
+    const file = lookup.rows[0];
+
+    if (file.storage_path) {
+      await deleteFromSupabaseStorage(file.storage_path);
+    }
+
+    await db.query(
+      `DELETE FROM files WHERE id = $1`,
+      [id]
+    );
+
     res.json({
       success: true,
-      file: result.rows[0],
+      file,
     });
   } catch (error) {
     console.error("DELETE FILE ERROR:", error);
