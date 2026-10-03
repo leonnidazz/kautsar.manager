@@ -1,7 +1,8 @@
 const express = require("express");
+const { createClient } = require("@supabase/supabase-js");
 const multer = require("multer");
-const path = require("node:path");
-const { randomUUID } = require("node:crypto");
+const path = require("path");
+const fs = require("fs");
 const cors = require("cors");
 
 
@@ -19,17 +20,7 @@ app.use(
   })
 );
 
-app.use(express.json({ limit: "2mb" }));
-
-app.get("/api/health", async (req, res) => {
-  try {
-    await db.query("SELECT 1");
-    res.json({ ok: true, database: "connected" });
-  } catch (error) {
-    console.error("HEALTH CHECK ERROR:", error);
-    res.status(503).json({ ok: false, database: "disconnected" });
-  }
-});
+app.use(express.json());
 // =========================
 // TASKS - POSTGRESQL
 // =========================
@@ -220,7 +211,7 @@ app.patch("/api/tasks/:id/toggle", async (req, res) => {
       SET
         status = CASE
           WHEN status = 'completed'
-            THEN 'todo'
+            THEN 'pending'
           ELSE 'completed'
         END,
         completed_at = CASE
@@ -476,6 +467,60 @@ const SUPABASE_SERVICE_ROLE_KEY =
 const SUPABASE_BUCKET =
   process.env.SUPABASE_BUCKET || "files";
 
+const supabase = createClient(
+  SUPABASE_URL,
+  SUPABASE_SERVICE_ROLE_KEY,
+  {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+    },
+  }
+);
+
+function getSupabaseStorageUrl(storagePath) {
+  const encodedPath = String(storagePath || "")
+    .split("/")
+    .filter(Boolean)
+    .map(encodeURIComponent)
+    .join("/");
+
+  return (
+    `${SUPABASE_URL}/storage/v1/object/` +
+    `${encodeURIComponent(SUPABASE_BUCKET)}/${encodedPath}`
+  );
+}
+
+async function deleteFromSupabaseStorage(storagePath) {
+  if (!storagePath) return;
+
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+    throw new Error(
+      "Konfigurasi Supabase Storage belum tersedia"
+    );
+  }
+
+  const response = await fetch(
+    getSupabaseStorageUrl(storagePath),
+    {
+      method: "DELETE",
+      headers: {
+        Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+        apikey: SUPABASE_SERVICE_ROLE_KEY,
+      },
+    }
+  );
+
+  if (!response.ok && response.status !== 404) {
+    const errorText = await response.text();
+    throw new Error(
+      `Supabase Storage delete gagal (${response.status}): ${
+        errorText || "response kosong"
+      }`
+    );
+  }
+}
+
 async function uploadToSupabaseStorage(file) {
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
     throw new Error(
@@ -496,7 +541,9 @@ async function uploadToSupabaseStorage(file) {
     .replace(/[^a-zA-Z0-9_-]/g, "_");
 
   const filename =
-    `${Date.now()}_${randomUUID()}_${safeName}${ext}`;
+    `${Date.now()}_${Math.random()
+      .toString(36)
+      .substring(2, 8)}_${safeName}${ext}`;
 
   const storagePath = `uploads/${filename}`;
 
@@ -563,6 +610,7 @@ app.get("/api/files", async (req, res) => {
     res.json(result.rows);
   } catch (error) {
     console.error("GET FILES ERROR:", error);
+
     res.status(500).json({
       error: "Gagal mengambil files",
     });
@@ -570,8 +618,6 @@ app.get("/api/files", async (req, res) => {
 });
 
 app.post("/api/files/upload", upload.single("file"), async (req, res) => {
-  let uploadedStoragePath = null;
-
   try {
     if (!req.file) {
       return res.status(400).json({
@@ -589,54 +635,54 @@ app.post("/api/files/upload", upload.single("file"), async (req, res) => {
 
     // Upload binary file ke Supabase Storage
     const storagePath = await uploadToSupabaseStorage(req.file);
-    uploadedStoragePath = storagePath;
 
-    const result = await db.query(
-      `INSERT INTO files
-       (
-         id,
-         user_id,
-         name,
-         storage_path,
-         mime_type,
-         size,
-         folder,
-         tags,
-         description,
-         created_at
-       )
-       VALUES
-       ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-       RETURNING *`,
-      [
-        id,
-        user_id,
-        req.file.originalname,
-        storagePath,
-        req.file.mimetype || "application/octet-stream",
-        req.file.size,
-        folder || "Umum",
-        JSON.stringify(
-          tags
-            ? JSON.parse(tags)
-            : []
-        ),
-        description || "",
-        new Date(),
-      ]
-    );
+    try {
+      const result = await db.query(
+        `INSERT INTO files
+         (
+           id,
+           user_id,
+           name,
+           storage_path,
+           mime_type,
+           size,
+           folder,
+           tags,
+           description,
+           created_at
+         )
+         VALUES
+         ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+         RETURNING *`,
+        [
+          id,
+          user_id,
+          req.file.originalname,
+          storagePath,
+          req.file.mimetype || "application/octet-stream",
+          req.file.size,
+          folder || "Umum",
+          JSON.stringify(
+            tags
+              ? JSON.parse(tags)
+              : []
+          ),
+          description || "",
+          new Date(),
+        ]
+      );
 
-    res.status(201).json(result.rows[0]);
+      res.status(201).json(result.rows[0]);
+    } catch (dbError) {
+      try {
+        await deleteFromSupabaseStorage(storagePath);
+      } catch (cleanupError) {
+        console.error("STORAGE CLEANUP ERROR:", cleanupError);
+      }
+      throw dbError;
+    }
   } catch (error) {
     console.error("UPLOAD FILE ERROR:", error);
-
-    if (uploadedStoragePath) {
-      try {
-        await deleteFromSupabaseStorage(uploadedStoragePath);
-      } catch (cleanupError) {
-        console.error("UPLOAD CLEANUP ERROR:", cleanupError);
-      }
-    }
 
     res.status(500).json({
       error: error.message || "Gagal mengupload file",
@@ -758,59 +804,33 @@ app.patch("/api/files/:id", async (req, res) => {
   }
 });
 
-async function deleteFromSupabaseStorage(storagePath) {
-  if (!storagePath || !SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
-    return;
-  }
-
-  const encodedPath = storagePath
-    .split("/")
-    .map(encodeURIComponent)
-    .join("/");
-
-  const storageUrl =
-    `${SUPABASE_URL}/storage/v1/object/` +
-    `${encodeURIComponent(SUPABASE_BUCKET)}/${encodedPath}`;
-
-  const response = await fetch(storageUrl, {
-    method: "DELETE",
-    headers: {
-      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-      apikey: SUPABASE_SERVICE_ROLE_KEY,
-    },
-  });
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(
-      `Supabase Storage delete gagal (${response.status}): ${errorText || "response kosong"}`
-    );
-  }
-}
-
 app.delete("/api/files/:id", async (req, res) => {
   try {
     const { id } = req.params;
 
-    const lookup = await db.query(
-      `SELECT * FROM files WHERE id = $1 LIMIT 1`,
+    const result = await db.query(
+      `SELECT *
+       FROM files
+       WHERE id = $1
+       LIMIT 1`,
       [id]
     );
 
-    if (lookup.rows.length === 0) {
+    if (result.rows.length === 0) {
       return res.status(404).json({
         error: "File tidak ditemukan",
       });
     }
 
-    const file = lookup.rows[0];
+    const file = result.rows[0];
 
     if (file.storage_path) {
       await deleteFromSupabaseStorage(file.storage_path);
     }
 
     await db.query(
-      `DELETE FROM files WHERE id = $1`,
+      `DELETE FROM files
+       WHERE id = $1`,
       [id]
     );
 
@@ -822,7 +842,7 @@ app.delete("/api/files/:id", async (req, res) => {
     console.error("DELETE FILE ERROR:", error);
 
     res.status(500).json({
-      error: "Gagal menghapus file",
+      error: error.message || "Gagal menghapus file",
     });
   }
 });
@@ -830,6 +850,88 @@ app.delete("/api/files/:id", async (req, res) => {
 /* =========================================================
    START SERVER
 ========================================================= */
+// PREVIEW FILE DARI SUPABASE STORAGE
+app.get("/api/files/preview/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const result = await db.query(
+      `SELECT *
+       FROM files
+       WHERE id = $1
+       LIMIT 1`,
+      [id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        error: "File tidak ditemukan di database",
+      });
+    }
+
+    const file = result.rows[0];
+
+    if (!file.storage_path) {
+      return res.status(404).json({
+        error: "Storage path file tidak ditemukan",
+      });
+    }
+
+    if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+      return res.status(500).json({
+        error: "Konfigurasi Supabase Storage belum tersedia",
+      });
+    }
+
+    const response = await fetch(
+      getSupabaseStorageUrl(file.storage_path),
+      {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+          apikey: SUPABASE_SERVICE_ROLE_KEY,
+        },
+      }
+    );
+
+    if (!response.ok) {
+      const errorText = await response.text();
+
+      console.error(
+        "SUPABASE PREVIEW ERROR:",
+        response.status,
+        errorText
+      );
+
+      return res.status(response.status).json({
+        error: "Gagal mengambil file dari Supabase Storage",
+      });
+    }
+
+    const buffer = Buffer.from(
+      await response.arrayBuffer()
+    );
+
+    res.setHeader(
+      "Content-Type",
+      file.mime_type || "application/octet-stream"
+    );
+    res.setHeader("Content-Length", buffer.length);
+    res.setHeader(
+      "Content-Disposition",
+      `inline; filename*=UTF-8''${encodeURIComponent(file.name)}`
+    );
+
+    res.send(buffer);
+  } catch (error) {
+    console.error("PREVIEW FILE ERROR:", error);
+
+    res.status(500).json({
+      error: error.message || "Gagal menampilkan file",
+    });
+  }
+});
+
 // DOWNLOAD FILE DARI SUPABASE STORAGE
 app.get("/api/files/download/:id", async (req, res) => {
   try {
@@ -863,14 +965,9 @@ app.get("/api/files/download/:id", async (req, res) => {
       });
     }
 
-    const encodedPath = file.storage_path
-      .split("/")
-      .map(encodeURIComponent)
-      .join("/");
-
-    const storageUrl =
-      `${SUPABASE_URL}/storage/v1/object/` +
-      `${SUPABASE_BUCKET}/${encodedPath}`;
+    const storageUrl = getSupabaseStorageUrl(
+      file.storage_path
+    );
 
     const response = await fetch(storageUrl, {
       method: "GET",

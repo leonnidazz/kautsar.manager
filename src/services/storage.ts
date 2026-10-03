@@ -640,10 +640,7 @@ async saveFile(
       `fl_${Date.now()}_${Math.random()
         .toString(36)
         .substring(2, 6)}`,
-    created_at:
-      fileData.id
-        ? fileData.created_at || new Date().toISOString()
-        : new Date().toISOString(),
+    created_at: new Date().toISOString(),
   };
 
   const response = await fetch(

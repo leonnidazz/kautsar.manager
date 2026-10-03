@@ -521,7 +521,7 @@ export const FilesView: React.FC<FilesViewProps> = ({
                 <div className="h-[65vh] w-full bg-black">
 
                   <iframe
-                    src={`${API_BASE_URL}/${previewFile.storage_path.replace(/^\/+/, '')}`}
+                    src={`${API_BASE_URL}/api/files/preview/${encodeURIComponent(previewFile.id)}`}
                     title={previewFile.name}
                     className="w-full h-full border-0"
                   />
@@ -537,7 +537,7 @@ export const FilesView: React.FC<FilesViewProps> = ({
                 <div className="max-h-[65vh] min-h-[300px] flex items-center justify-center overflow-auto bg-black/50 p-4">
 
                   <img
-                    src={`${API_BASE_URL}/${previewFile.storage_path.replace(/^\/+/, '')}`}
+                    src={`${API_BASE_URL}/api/files/preview/${encodeURIComponent(previewFile.id)}`}
                     alt={previewFile.name}
                     className="max-h-[60vh] max-w-full object-contain"
                   />
@@ -615,7 +615,7 @@ export const FilesView: React.FC<FilesViewProps> = ({
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pt-3 border-t border-[#222735]">
 
               <span className="text-[11px] text-[#6b7280]">
-                Tersimpan di Object Storage Local
+                Tersimpan di Supabase Storage
               </span>
 
               <div className="flex items-center gap-2">
