@@ -552,15 +552,6 @@ async function uploadToSupabaseStorage(file) {
 
   const storagePath = `uploads/${filename}`;
 
-  const encodedPath = storagePath
-    .split("/")
-    .map(encodeURIComponent)
-    .join("/");
-
-  const storageUrl =
-    `${SUPABASE_URL}/storage/v1/object/` +
-    `${encodeURIComponent(SUPABASE_BUCKET)}/${encodedPath}`;
-
   console.log("SUPABASE STORAGE UPLOAD START:", {
     bucket: SUPABASE_BUCKET,
     path: storagePath,
@@ -568,108 +559,90 @@ async function uploadToSupabaseStorage(file) {
     mimeType: file.mimetype,
   });
 
-  const response = await fetch(storageUrl, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-      apikey: SUPABASE_SERVICE_ROLE_KEY,
-      "Content-Type":
+  const { data, error } = await supabase.storage
+    .from(SUPABASE_BUCKET)
+    .upload(storagePath, file.buffer, {
+      contentType:
         file.mimetype || "application/octet-stream",
-      "x-upsert": "true",
-    },
-    body: file.buffer,
-  });
+      upsert: true,
+    });
 
-  const responseText = await response.text();
+  if (error) {
+    console.error(
+      "SUPABASE STORAGE UPLOAD ERROR:",
+      error
+    );
 
-  console.log(
-    "SUPABASE STORAGE RESPONSE:",
-    response.status,
-    responseText || "(empty response)"
-  );
-
-  if (!response.ok) {
     throw new Error(
-      `Supabase Storage upload gagal (${response.status}): ${
-        responseText || "response kosong"
-      }`
+      `Supabase Storage upload gagal: ${error.message}`
     );
   }
 
   console.log(
     "SUPABASE STORAGE UPLOAD SUCCESS:",
-    storagePath
+    data
   );
 
   return storagePath;
 }
 
-app.get("/api/files", async (req, res) => {
-  try {
-    const result = await db.query(`
-      SELECT *
-      FROM files
-      ORDER BY created_at DESC
-    `);
-
-    res.json(result.rows);
-  } catch (error) {
-    console.error("GET FILES ERROR:", error);
-
-    res.status(500).json({
-      error: "Gagal mengambil files",
-    });
-  }
-});
-
-app.post("/api/files/upload", upload.single("file"), async (req, res) => {
-  try {
-    if (!req.file) {
-      return res.status(400).json({
-        error: "File tidak ditemukan",
-      });
-    }
-
-    const {
-      id,
-      user_id,
-      folder,
-      tags,
-      description,
-    } = req.body;
-
-    // Upload binary file ke Supabase Storage
-    const storagePath = await uploadToSupabaseStorage(req.file);
-
+app.post(
+  "/api/files/upload",
+  upload.single("file"),
+  async (req, res) => {
     try {
+      if (!req.file) {
+        return res.status(400).json({
+          error: "File tidak ditemukan",
+        });
+      }
+
+      const {
+        user_id,
+        folder,
+        tags,
+        description,
+      } = req.body;
+
+      const storagePath =
+        await uploadToSupabaseStorage(req.file);
+
+      const id =
+        `fl_${Date.now()}_${Math.random()
+          .toString(36)
+          .substring(2, 6)}`;
+
       const result = await db.query(
         `INSERT INTO files
-         (
-           id,
-           user_id,
-           name,
-           storage_path,
-           mime_type,
-           size,
-           folder,
-           tags,
-           description,
-           created_at
-         )
-         VALUES
-         ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-         RETURNING *`,
-        [
+        (
           id,
           user_id,
+          name,
+          storage_path,
+          mime_type,
+          size,
+          folder,
+          tags,
+          description,
+          created_at
+        )
+        VALUES
+        ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+        RETURNING *`,
+        [
+          id,
+          user_id || "usr_01h8q7k9",
           req.file.originalname,
           storagePath,
-          req.file.mimetype || "application/octet-stream",
-          req.file.size,
+          req.file.mimetype ||
+            "application/octet-stream",
+          req.file.size || 0,
           folder || "Umum",
           JSON.stringify(
             tags
-              ? JSON.parse(tags)
+              ? Array.isArray(tags)
+                ? tags
+                : [tags]
               : []
           ),
           description || "",
@@ -678,80 +651,97 @@ app.post("/api/files/upload", upload.single("file"), async (req, res) => {
       );
 
       res.status(201).json(result.rows[0]);
-    } catch (dbError) {
-      try {
-        await deleteFromSupabaseStorage(storagePath);
-      } catch (cleanupError) {
-        console.error("STORAGE CLEANUP ERROR:", cleanupError);
-      }
-      throw dbError;
+    } catch (error) {
+      console.error(
+        "POST FILE UPLOAD ERROR:",
+        error
+      );
+
+      res.status(500).json({
+        error:
+          error.message ||
+          "Gagal upload file",
+      });
     }
-  } catch (error) {
-    console.error("UPLOAD FILE ERROR:", error);
-
-    res.status(500).json({
-      error: error.message || "Gagal mengupload file",
-    });
   }
-});
+);
 
-app.post("/api/files", async (req, res) => {
-  try {
-    const {
-      id,
-      user_id,
-      name,
-      storage_path,
-      mime_type,
-      size,
-      folder,
-      tags,
-      description,
-      created_at,
-    } = req.body;
+app.post(
+  "/api/files",
+  upload.single("file"),
+  async (req, res) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({
+          error: "File tidak ditemukan",
+        });
+      }
 
-    const result = await db.query(
-      `INSERT INTO files
-       (
-         id,
-         user_id,
-         name,
-         storage_path,
-         mime_type,
-         size,
-         folder,
-         tags,
-         description,
-         created_at
-       )
-       VALUES
-       ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-       RETURNING *`,
-      [
-        id,
+      const {
         user_id,
-        name,
-        storage_path,
-        mime_type,
-        size || 0,
-        folder || "Umum",
-        JSON.stringify(
-          Array.isArray(tags) ? tags : []
-        ),
-        description || "",
-        created_at || new Date(),
-      ]
-    );
+        folder,
+        tags,
+        description,
+      } = req.body;
 
-    res.status(201).json(result.rows[0]);
-  } catch (error) {
-    console.error("POST FILE ERROR:", error);
+      const storagePath =
+        await uploadToSupabaseStorage(req.file);
 
-    res.status(500).json({
-      error: "Gagal menyimpan file",
-    });
+      const id =
+        `fl_${Date.now()}_${Math.random()
+          .toString(36)
+          .substring(2, 6)}`;
+
+      const result = await db.query(
+        `INSERT INTO files
+        (
+          id,
+          user_id,
+          name,
+          storage_path,
+          mime_type,
+          size,
+          folder,
+          tags,
+          description,
+          created_at
+        )
+        VALUES
+        ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+        RETURNING *`,
+        [
+          id,
+          user_id || "usr_01h8q7k9",
+          req.file.originalname,
+          storagePath,
+          req.file.mimetype ||
+            "application/octet-stream",
+          req.file.size || 0,
+          folder || "Umum",
+          JSON.stringify(
+            tags
+              ? Array.isArray(tags)
+                ? tags
+                : [tags]
+              : []
+          ),
+          description || "",
+          new Date(),
+        ]
+      );
+
+      res.status(201).json(result.rows[0]);
+    } catch (error) {
+      console.error("POST FILE ERROR:", error);
+
+      res.status(500).json({
+        error:
+          error.message ||
+          "Gagal menyimpan file",
+      });
+    }
   }
-});
+);
 
 app.patch("/api/files/:id", async (req, res) => {
   try {
@@ -858,149 +848,34 @@ app.delete("/api/files/:id", async (req, res) => {
 // PREVIEW FILE DARI SUPABASE STORAGE
 app.get("/api/files/preview/:id", async (req, res) => {
   try {
-    const { id } = req.params;
-
     const result = await db.query(
-      `SELECT *
-       FROM files
-       WHERE id = $1
-       LIMIT 1`,
-      [id]
+      `SELECT * FROM files WHERE id = $1`,
+      [req.params.id]
     );
 
     if (result.rows.length === 0) {
       return res.status(404).json({
-        error: "File tidak ditemukan di database",
+        error: "File tidak ditemukan",
       });
     }
 
     const file = result.rows[0];
 
-    if (!file.storage_path) {
+    const { data, error } = await supabase.storage
+      .from(SUPABASE_BUCKET)
+      .download(file.storage_path);
+
+    if (error) {
+      console.error("SUPABASE PREVIEW ERROR:", error);
+
       return res.status(404).json({
-        error: "Storage path file tidak ditemukan",
-      });
-    }
-
-    if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
-      return res.status(500).json({
-        error: "Konfigurasi Supabase Storage belum tersedia",
-      });
-    }
-
-    const response = await fetch(
-      getSupabaseStorageUrl(file.storage_path),
-      {
-        method: "GET",
-        headers: {
-          Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-          apikey: SUPABASE_SERVICE_ROLE_KEY,
-        },
-      }
-    );
-
-    if (!response.ok) {
-      const errorText = await response.text();
-
-      console.error(
-        "SUPABASE PREVIEW ERROR:",
-        response.status,
-        errorText
-      );
-
-      return res.status(response.status).json({
-        error: "Gagal mengambil file dari Supabase Storage",
+        error: "File tidak ditemukan di Storage",
       });
     }
 
     const buffer = Buffer.from(
-      await response.arrayBuffer()
+      await data.arrayBuffer()
     );
-
-    res.setHeader(
-      "Content-Type",
-      file.mime_type || "application/octet-stream"
-    );
-    res.setHeader("Content-Length", buffer.length);
-    res.setHeader(
-      "Content-Disposition",
-      `inline; filename*=UTF-8''${encodeURIComponent(file.name)}`
-    );
-
-    res.send(buffer);
-  } catch (error) {
-    console.error("PREVIEW FILE ERROR:", error);
-
-    res.status(500).json({
-      error: error.message || "Gagal menampilkan file",
-    });
-  }
-});
-
-// DOWNLOAD FILE DARI SUPABASE STORAGE
-app.get("/api/files/download/:id", async (req, res) => {
-  try {
-    const { id } = req.params;
-
-    const result = await db.query(
-      `SELECT *
-       FROM files
-       WHERE id = $1
-       LIMIT 1`,
-      [id]
-    );
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({
-        error: "File tidak ditemukan di database",
-      });
-    }
-
-    const file = result.rows[0];
-
-    if (!file.storage_path) {
-      return res.status(404).json({
-        error: "Storage path file tidak ditemukan",
-      });
-    }
-
-    if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
-      return res.status(500).json({
-        error: "Konfigurasi Supabase Storage belum tersedia",
-      });
-    }
-
-    const storageUrl = getSupabaseStorageUrl(
-  file.storage_path,
-  true
-);
-
-    console.log("SUPABASE DOWNLOAD URL:", storageUrl);
-
-    const response = await fetch(storageUrl, {
-      method: "GET",
-      headers: {
-        Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-        apikey: SUPABASE_SERVICE_ROLE_KEY,
-      },
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-
-      console.error(
-        "SUPABASE DOWNLOAD ERROR:",
-        response.status,
-        errorText
-      );
-
-      return res.status(response.status).json({
-        error: "Gagal mengambil file dari Supabase Storage",
-      });
-    }
-
-    const arrayBuffer = await response.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
 
     res.setHeader(
       "Content-Type",
@@ -1014,7 +889,66 @@ app.get("/api/files/download/:id", async (req, res) => {
 
     res.setHeader(
       "Content-Disposition",
-      `attachment; filename="${encodeURIComponent(file.name)}"`
+      "inline"
+    );
+
+    res.send(buffer);
+  } catch (error) {
+    console.error("PREVIEW FILE ERROR:", error);
+
+    res.status(500).json({
+      error: "Gagal membuka preview file",
+    });
+  }
+});
+
+// DOWNLOAD FILE DARI SUPABASE STORAGE
+app.get("/api/files/download/:id", async (req, res) => {
+  try {
+    const result = await db.query(
+      `SELECT * FROM files WHERE id = $1`,
+      [req.params.id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        error: "File tidak ditemukan",
+      });
+    }
+
+    const file = result.rows[0];
+
+    const { data, error } = await supabase.storage
+      .from(SUPABASE_BUCKET)
+      .download(file.storage_path);
+
+    if (error) {
+      console.error("SUPABASE DOWNLOAD ERROR:", error);
+
+      return res.status(404).json({
+        error: "File tidak ditemukan di Storage",
+      });
+    }
+
+    const buffer = Buffer.from(
+      await data.arrayBuffer()
+    );
+
+    res.setHeader(
+      "Content-Type",
+      file.mime_type || "application/octet-stream"
+    );
+
+    res.setHeader(
+      "Content-Length",
+      buffer.length
+    );
+
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${encodeURIComponent(
+        file.name
+      )}"`
     );
 
     res.send(buffer);
@@ -1022,7 +956,7 @@ app.get("/api/files/download/:id", async (req, res) => {
     console.error("DOWNLOAD FILE ERROR:", error);
 
     res.status(500).json({
-      error: error.message || "Gagal mendownload file",
+      error: "Gagal mengunduh file",
     });
   }
 });
