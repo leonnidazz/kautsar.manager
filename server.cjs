@@ -478,15 +478,20 @@ const supabase = createClient(
   }
 );
 
-function getSupabaseStorageUrl(storagePath) {
+function getSupabaseStorageUrl(storagePath, authenticated = false) {
   const encodedPath = String(storagePath || "")
     .split("/")
     .filter(Boolean)
     .map(encodeURIComponent)
     .join("/");
 
+  const accessType = authenticated
+    ? "authenticated"
+    : "public";
+
   return (
     `${SUPABASE_URL}/storage/v1/object/` +
+    `${accessType}/` +
     `${encodeURIComponent(SUPABASE_BUCKET)}/${encodedPath}`
   );
 }
@@ -966,8 +971,11 @@ app.get("/api/files/download/:id", async (req, res) => {
     }
 
     const storageUrl = getSupabaseStorageUrl(
-      file.storage_path
-    );
+  file.storage_path,
+  true
+);
+
+    console.log("SUPABASE DOWNLOAD URL:", storageUrl);
 
     const response = await fetch(storageUrl, {
       method: "GET",
